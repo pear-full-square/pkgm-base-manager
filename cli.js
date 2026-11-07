@@ -1,39 +1,28 @@
-#!/usr/bin/env node
-// pkgm: the package manager, basic.
-//   pkgm import  --dev=<development repository> --out=<folder of package repositories>
-//   pkgm write   --dev=<development repository> --out=<folder> [--only=a,b] [--keep]
-//   pkgm install <package> --from=<folder>[,<folder>] [--into=<install folder>] [--override=<org>/<module>=<dir>]...
-//   pkgm test    <package> [--into=<install folder>]
-//   pkgm list    [--into=<install folder>]
-//   pkgm uninstall <package> [--into=<install folder>]
-// The install folder defaults to $HAICC_HOME/packages ($HAICC_HOME: ./install).
-// Progress to stderr as JSON lines (--quiet: none); the result to stdout, as JSON; exit 1
-// when a test fails or the operation is refused.
-import process from 'node:process'
-import { join } from 'node:path'
-import { importThirdParty, writePackages, install, testPackage, installed, uninstall } from './index.js'
+#!/usr/bin/env bare
+// pkgm: the package manager.
+//   pkgm assemble <package folder> <swarm> --into=<repository>   a swarm's codebase into its master's repository
+//   pkgm test     <package folder | repository> [--set=<set>]   its tests run in place, bottom up (a set: test/<set>.json)
+//   pkgm contents <repository>                                  what is there, and where from
+// Progress to stderr as JSON lines (--quiet: none); the result to stdout,
+// as JSON; exit 1 when a test fails or the operation is refused, 2 on a bad call.
+import process from 'bare-process'
+import { readFileSync, writeSync } from 'bare-fs'
+import { assemble, testPackage, contentsOf } from './index.js'
 
 const [op, ...rest] = process.argv.slice(2)
-const flags = {}; const args = []; const overrides = {}
-for (const a of rest) {
-  const m = a.match(/^--([^=]+)(?:=(.*))?$/)
-  if (!m) { args.push(a); continue }
-  if (m[1] === 'override') { const i = m[2].lastIndexOf('='); overrides[m[2].slice(0, i)] = m[2].slice(i + 1) } else flags[m[1]] = m[2] ?? true
-}
-const into = flags.into || join(process.env.HAICC_HOME || 'install', 'packages')
-const log = flags.quiet ? () => {} : e => process.stderr.write(JSON.stringify(e) + '\n')
-const out = (v, ok = true) => { process.stdout.write(JSON.stringify(v, null, 2) + '\n'); process.exit(ok ? 0 : 1) }
-const need = (v, what) => { if (!v) { process.stderr.write(`pkgm ${op}: ${what} needed\n`); process.exit(2) } return v }
+const flags = Object.fromEntries(rest.filter(a => a.startsWith('--')).map(a => { const [k, v] = a.slice(2).split('='); return [k, v ?? true] }))
+const args = rest.filter(a => !a.startsWith('--'))
+const log = flags.quiet ? () => {} : e => writeSync(2, JSON.stringify(e) + '\n')
+// Written at once (on Bare, output buffered for a pipe is lost to an exit).
+const out = (v, ok = true) => { writeSync(1, JSON.stringify(v, null, 2) + '\n'); process.exit(ok ? 0 : 1) }
+const need = (v, what) => { if (!v) { writeSync(2, `pkgm ${op}: ${what} needed\n`); process.exit(2) } return v }
 
 try {
-  if (op === 'import') out(importThirdParty({ dev: need(flags.dev, '--dev'), out: need(flags.out, '--out'), log }))
-  else if (op === 'write') { const r = writePackages({ dev: need(flags.dev, '--dev'), out: need(flags.out, '--out'), only: flags.only ? String(flags.only).split(',') : null, keep: Boolean(flags.keep), log }); out(r, r.ok) }
-  else if (op === 'install') out({ into, done: install(need(args[0], 'a package'), { from: need(flags.from, '--from').split(','), into, overrides, log }) })
-  else if (op === 'test') { const r = testPackage(need(args[0], 'a package'), { into, log }); out(r, r.ok) }
-  else if (op === 'list') out({ into, ...installed(into) })
-  else if (op === 'uninstall') out({ into, removed: uninstall(need(args[0], 'a package'), { into }) })
-  else { process.stderr.write((await import('node:fs')).readFileSync(new URL(import.meta.url), 'utf8').split('\n').slice(1, 12).map(l => l.replace(/^\/\/ ?/, '')).join('\n') + '\n'); process.exit(2) }
+  if (op === 'assemble') out(assemble({ from: need(args[0], 'a package folder'), swarm: need(args[1], 'a swarm'), into: need(flags.into, '--into'), log }))
+  else if (op === 'test') { const r = testPackage(need(args[0], 'a folder'), { log, set: flags.set || null }); out(r, r.ok) }
+  else if (op === 'contents') out(contentsOf(need(args[0], 'a repository')))
+  else { writeSync(2, readFileSync(new URL(import.meta.url).pathname, 'utf8').split('\n').slice(1, 8).map(l => l.replace(/^\/\/ ?/, '')).join('\n') + '\n'); process.exit(2) }
 } catch (err) {
-  process.stderr.write(`pkgm ${op}: ${err.message}\n`)
+  writeSync(2, `pkgm ${op}: ${err.message}\n`)
   process.exit(1)
 }
