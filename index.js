@@ -10,6 +10,9 @@
 //        its modules' own, its swarms', its named tests (test/<test>/test);
 //        each run stopped and failed after `timeout` (10 minutes)
 //   contentsOf(dir)    a repository's contents.json, or null
+//   deploy({ from, into })   a package deployed properly: staged beside `into`
+//        (hard links), checked intact, its validation set run there; only then
+//        put in place; else nothing changed
 //   packageHash(dir)   a package's identity (what the package writer records)
 //   verify(dir)        the package intact: its hash against its package.json's
 // A package's structure: notes/packages.md, "Packages, platforms, swarms
@@ -24,11 +27,10 @@ import process from 'bare-process'
 const readJson = f => JSON.parse(readFileSync(f, 'utf8'))
 const writeJson = (f, v) => { mkdirSync(dirname(f), { recursive: true }); writeFileSync(f + '.tmp', JSON.stringify(v, null, 2) + '\n'); renameSync(f + '.tmp', f) }
 export const manifest = dir => existsSync(join(dir, 'package.json')) ? readJson(join(dir, 'package.json')).pkgm || null : null
-// A package's identity: everything in it but its manifest, git and its LICENSE
-// (the repository's own, kept when the package is written into it, so not there
-// when the hash is taken), its readme last. The package writer records it; a
-// copy is checked against it.
-export const packageHash = dir => hashTree(dir, [...readdirSync(dir).filter(n => !['package.json', 'README.md', '.git', 'LICENSE'].includes(n)).sort(), ...(existsSync(join(dir, 'README.md')) ? ['README.md'] : [])])
+// A package's identity: everything in it but its manifest and git (its LICENSE
+// included: the package writer puts it in before the hash is taken), its readme
+// last. The package writer records it; a copy is checked against it.
+export const packageHash = dir => hashTree(dir, [...readdirSync(dir).filter(n => !['package.json', 'README.md', '.git'].includes(n)).sort(), ...(existsSync(join(dir, 'README.md')) ? ['README.md'] : [])])
 export function verify (dir) {
   const recorded = manifest(dir)?.hash
   if (!recorded) return { ok: false, said: 'no hash recorded (no package.json with pkgm.hash)' }
@@ -83,11 +85,33 @@ export function assemble ({ from, swarm, into, log = () => {} }) {
   return r
 }
 
+// ---- deploying a package --------------------------------------------------
+
+export function deploy ({ from, into, log = () => {} }) {
+  from = resolve(from); into = resolve(into)
+  const stage = `${into}.deploying`
+  remove(stage)
+  mkdirSync(dirname(into), { recursive: true })
+  // A copy as hard links (no space taken twice; nothing in it is ever edited in place).
+  const c = spawnSync('cp', ['-al', from, stage], { stdio: ['ignore', 'pipe', 'pipe'] })
+  if (c.status !== 0) { remove(stage); return { ok: false, said: `could not be copied: ${String(c.stderr).trim()}` } }
+  remove(join(stage, '.git'))
+  const v = verify(stage)
+  if (!v.ok) { remove(stage); return { ok: false, said: v.said } }
+  const set = existsSync(join(stage, 'test', 'validation.json')) ? 'validation' : null
+  const t = testPackage(stage, { set, log })
+  if (!t.ok) { remove(stage); return { ok: false, said: 'its validation failed', runs: t.runs } }
+  remove(into)
+  renameSync(stage, into)
+  log({ kind: 'deployed', package: basename(into), hash: v.hash.slice(0, 12) })
+  return { ok: true, hash: v.hash, said: `deployed: ${v.said}, its validation passed`, runs: t.runs }
+}
+
 // ---- tests, within the package, bottom up --------------------------------
 
 const executable = f => { try { return (statSync(f).mode & 0o111) !== 0 && statSync(f).isFile() } catch { return false } }
 
-// A set (test/<set>.json): { description, modules: true|false, tests: [...] }.
+// A set (test/<set>.json): { description, modules: true|false, swarms: true|false, tests: [...] }.
 // Without one: everything that runs in place. A test with a `boot` is booted
 // (it needs a work folder: ./haicc boot <repo>/test/<test>): listed, not run here.
 export function testSet (dir, set) {
@@ -128,7 +152,7 @@ export function testPackage (dir, { log = () => {}, env: extra = {}, timeout = 1
   }
   // The swarms': each executable in swarms/<swarm>/test/, in the swarm's folder.
   const swarms = join(dir, 'swarms')
-  if (!chosen && existsSync(swarms)) for (const s of readdirSync(swarms).sort()) {
+  if ((!chosen || chosen.swarms) && existsSync(swarms)) for (const s of readdirSync(swarms).sort()) {
     const t = join(swarms, s, 'test')
     if (existsSync(t)) for (const f of readdirSync(t).sort()) if (executable(join(t, f))) run(`swarms/${s}/test/${f}`, join(t, f), [], join(swarms, s))
   }
