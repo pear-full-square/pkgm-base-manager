@@ -109,6 +109,7 @@ export function deploy ({ from, into, log = () => {} }) {
 
 // ---- tests, within the package, bottom up --------------------------------
 
+// catch: not there: not an executable
 const executable = f => { try { return (statSync(f).mode & 0o111) !== 0 && statSync(f).isFile() } catch { return false } }
 
 // A set (test/<set>.json): { description, modules: true|false, swarms: true|false, tests: [...] }.
