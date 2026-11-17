@@ -8,10 +8,14 @@
     "pkgm": "./cli.js"
   },
   "scripts": {
-    "test": "bare ../../node_modules/brittle/cmd.js test/*.test.js"
+    "test": "brittle-bare test/*.test.js"
   },
   "license": "MIT",
   "dependencies": {
     "sodium-native": "5.2.0"
+  },
+  "devDependencies": {
+    "bare-runtime": "1.36.0",
+    "brittle": "4.5.0"
   }
 }
