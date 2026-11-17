@@ -41,9 +41,7 @@ The library HAICC's boot loads releases with (phase 3):
   test/<test>/test               its named tests
 ```
 
-Self-contained: it carries what it runs on, no requires. The design:
-`notes/packages.md` in the development repository, "Packages, platforms,
-swarms and tests".
+Self-contained: it carries what it runs on, no requires.
 
 ## Assembling a swarm's codebase
 
