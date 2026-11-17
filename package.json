@@ -15,7 +15,6 @@
     "sodium-native": "5.2.0"
   },
   "devDependencies": {
-    "bare-runtime": "1.36.0",
     "brittle": "4.5.0"
   }
 }
